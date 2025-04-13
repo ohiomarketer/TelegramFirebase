@@ -1,64 +1,67 @@
+require('dotenv').config();
 const admin = require('firebase-admin');
 const TelegramBot = require('node-telegram-bot-api');
+const path = require('path');
 
-// === Configura Firebase ===
-const serviceAccount = require('./firebase-key.json');
+// === Carga y parsea la clave de Firebase desde el archivo JSON ===
+const serviceAccountPath = path.resolve(__dirname, process.env.FIREBASE_KEY);
+const serviceAccount = require(serviceAccountPath);
 
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount),
 });
-
 const db = admin.firestore();
 
 // === Configura Telegram Bot ===
 const TELEGRAM_TOKEN = '7722494065:AAG_6OFaADe8YDLbYX7aIHV1G1Qegk13aZg';
-const CHAT_ID = '7254169775'; // Tu chat ID real
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true }); // Habilita polling para recibir mensajes
+const TELEGRAM_CHAT_ID = '7254169775';
+const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// === Obtener el chat ID cuando alguien escriba ===
-bot.on('message', (msg) => {
-  console.log(`➡️  Mensaje recibido de ${msg.from.username || 'usuario'}:`);
-  console.log(`🆔 Tu chat ID es: ${msg.chat.id}`);
-});
-
-// === Escucha documentos nuevos en una colección ===
-const listenToCollection = () => {
-  const collectionRef = db.collection('payments'); // Cambia por el nombre real de tu colección
-
-  collectionRef.onSnapshot(snapshot => {
-    snapshot.docChanges().forEach(change => {
-      if (change.type === 'added') {
-        const data = change.doc.data();
-        const message = formatPrettyMessage(data);
-        bot.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
-      }
-    });
-  }, err => {
-    console.error('Error escuchando la colección:', err);
-  });
+// === Formatea el mensaje bonito ===
+const formatPrettyMessage = (data) => {
+  let message = '🧾 *Nuevo pago registrado:*\n\n';
+  for (const key in data) {
+    let value = data[key];
+    if (value instanceof admin.firestore.Timestamp) {
+      value = value.toDate().toLocaleString('es-AR', {
+        dateStyle: 'long',
+        timeStyle: 'medium',
+        timeZone: 'America/Argentina/Buenos_Aires',
+      });
+    }
+    message += `• *${key}*: ${value}\n`;
+  }
+  return message;
 };
 
-// === Formatea el mensaje de manera bonita ===
-const formatPrettyMessage = (data) => {
-    let message = `🧾 *Nuevo pago registrado:*\n\n`;
-    for (const key in data) {
-      let value = data[key];
-  
-      // Si el valor es un Timestamp de Firestore, formatearlo
-      if (value instanceof admin.firestore.Timestamp) {
-        value = value.toDate().toLocaleString('es-AR', {
-          dateStyle: 'long',
-          timeStyle: 'medium',
-          timeZone: 'America/Argentina/Buenos_Aires'
-        });
-      }
-  
-      message += `• *${key}*: \`${value}\`\n`;
+// === Escuchar colección de Firestore ===
+const listenToCollection = () => {
+  const collectionRef = db.collection('payments');
+
+  collectionRef.onSnapshot(
+    (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          const message = formatPrettyMessage(data);
+
+          // Enviar a Telegram
+          telegramBot
+            .sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' })
+            .then(() => console.log('📩 Enviado a Telegram'))
+            .catch((err) => console.error('❌ Error Telegram:', err));
+        }
+      });
+    },
+    (err) => {
+      console.error('❌ Error escuchando Firestore:', err);
     }
-    return message;
-  };
-  
+  );
+};
 
 listenToCollection();
 
-console.log('🤖 Bot de Telegram escuchando Firestore y esperando mensajes para mostrar chat ID...');
+// === Opcional: ver tu chat ID de Telegram si alguien escribe ===
+telegramBot.on('message', (msg) => {
+  console.log(`🆔 Chat ID: ${msg.chat.id}`);
+});
